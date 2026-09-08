@@ -1,6 +1,6 @@
 {
   "name": "qr-decoder-js",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Browser QR code decoder with character encoding detection and fallback decoding to reduce garbled Chinese and non-UTF-8 text.",
   "type": "module",
   "main": "./dist/qr-decoder.umd.cjs",
@@ -39,6 +39,14 @@
   ],
   "author": "yanyaoli",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yanyaoli/qr-decoder-js.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yanyaoli/qr-decoder-js/issues"
+  },
+  "homepage": "https://github.com/yanyaoli/qr-decoder-js#readme",
   "devEngines": {
     "packageManager": {
       "name": "pnpm",
