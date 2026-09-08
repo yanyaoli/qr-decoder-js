@@ -24,6 +24,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:demo": "vite build --config vite.demo.config.js",
     "postbuild": "node -e \"require('fs').copyFileSync('src/types.d.ts', 'dist/index.d.ts')\"",
     "preview": "vite preview"
   },
