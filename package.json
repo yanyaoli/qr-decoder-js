@@ -1,0 +1,54 @@
+{
+  "name": "qr-decoder-js",
+  "version": "1.0.0",
+  "description": "Browser QR code decoder with character encoding detection and fallback decoding to reduce garbled Chinese and non-UTF-8 text.",
+  "type": "module",
+  "main": "./dist/qr-decoder.umd.cjs",
+  "module": "./dist/qr-decoder.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "README_ZH.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/qr-decoder.js",
+      "require": "./dist/qr-decoder.umd.cjs",
+      "default": "./dist/qr-decoder.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "sideEffects": false,
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "postbuild": "node -e \"require('fs').copyFileSync('src/types.d.ts', 'dist/index.d.ts')\"",
+    "preview": "vite preview"
+  },
+  "keywords": [
+    "qrcode",
+    "decode",
+    "qr",
+    "wasm",
+    "zxing",
+    "encoding",
+    "character-encoding",
+    "text-decoding"
+  ],
+  "author": "yanyaoli",
+  "license": "MIT",
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "11.24.0",
+      "onFail": "download"
+    }
+  },
+  "packageManager": "pnpm@11.24.0",
+  "devDependencies": {
+    "vite": "^8.2.2",
+    "zxing-wasm": "^3.1.3"
+  }
+}

@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="A focused QR code decoder demo with character encoding detection."
+    />
+    <title>QR Decoder | Local Demo</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --canvas: #f3f5f7;
+        --surface: #ffffff;
+        --ink: #1c2733;
+        --muted: #687582;
+        --line: #d7dee5;
+        --accent: #245b7a;
+        --accent-dark: #1b465f;
+        --success: #216e4e;
+        --success-bg: #edf7f1;
+        --danger: #a13a32;
+        --danger-bg: #fff2f0;
+        --radius: 8px;
+        --space: 20px;
+        font-family: "Segoe UI", "Helvetica Neue", sans-serif;
+        font-size: 16px;
+        line-height: 1.5;
+        color: var(--ink);
+        background: var(--canvas);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        min-width: 320px;
+        margin: 0;
+      }
+
+      .shell {
+        width: min(100% - 40px, 760px);
+        margin: 0 auto;
+        padding: 64px 0 72px;
+      }
+
+      .eyebrow {
+        margin: 0 0 10px;
+        color: var(--accent);
+        font-size: 0.75rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(1.75rem, 4vw, 2.25rem);
+        line-height: 1.2;
+        letter-spacing: 0;
+      }
+
+      .intro {
+        max-width: 600px;
+        margin: 12px 0 32px;
+        color: var(--muted);
+      }
+
+      .workspace {
+        padding: 28px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--surface);
+        box-shadow: 0 10px 30px rgb(28 39 51 / 7%);
+      }
+
+      .toolbar {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+
+      .file-picker,
+      .reset-button {
+        min-height: 40px;
+        padding: 0 16px;
+        border: 1px solid var(--accent);
+        border-radius: var(--radius);
+        font: inherit;
+        font-size: 0.9375rem;
+        font-weight: 600;
+        line-height: 40px;
+        cursor: pointer;
+      }
+
+      .file-picker {
+        display: inline-block;
+        color: #fff;
+        background: var(--accent);
+      }
+
+      .file-picker:hover {
+        background: var(--accent-dark);
+      }
+
+      .reset-button {
+        display: none;
+        color: var(--accent);
+        background: transparent;
+      }
+
+      .reset-button:hover {
+        background: #f1f5f7;
+      }
+
+      .file-picker:focus-within,
+      .reset-button:focus-visible {
+        outline: 3px solid rgb(36 91 122 / 25%);
+        outline-offset: 2px;
+      }
+
+      #file-input {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
+        clip-path: inset(50%);
+      }
+
+      .hint {
+        margin: 12px 0 0;
+        color: var(--muted);
+        font-size: 0.875rem;
+      }
+
+      .preview-frame {
+        display: none;
+        margin-top: 24px;
+        padding-top: 24px;
+        border-top: 1px solid var(--line);
+      }
+
+      #preview {
+        display: block;
+        width: min(100%, 360px);
+        max-height: 300px;
+        margin: 0 auto;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        object-fit: contain;
+      }
+
+      .status-block {
+        margin-top: 24px;
+        padding-top: 20px;
+        border-top: 1px solid var(--line);
+      }
+
+      #status {
+        margin: 0;
+        font-weight: 700;
+      }
+
+      #meta {
+        margin: 6px 0 0;
+        color: var(--muted);
+        font-size: 0.875rem;
+      }
+
+      #result,
+      #error {
+        margin: 16px 0 0;
+        padding: 16px;
+        border-radius: 6px;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+
+      #result {
+        border: 1px solid #b9ddc8;
+        background: var(--success-bg);
+        color: #173f2d;
+      }
+
+      #error {
+        border: 1px solid #edc2bd;
+        background: var(--danger-bg);
+        color: var(--danger);
+      }
+
+      [hidden] {
+        display: none !important;
+      }
+
+      @media (max-width: 520px) {
+        .shell {
+          width: min(100% - 28px, 760px);
+          padding: 36px 0 48px;
+        }
+
+        .workspace {
+          padding: 20px;
+        }
+
+        .file-picker,
+        .reset-button {
+          width: 100%;
+          text-align: center;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <p class="eyebrow">QR Decoder</p>
+      <h1>Decode a QR code</h1>
+      <p class="intro">
+        Select an image to decode its QR payload and inspect the detected character
+        encoding.
+      </p>
+
+      <section class="workspace" aria-labelledby="upload-label">
+        <div class="toolbar">
+          <label class="file-picker" for="file-input" id="upload-label">
+            Select image
+            <input id="file-input" type="file" accept="image/*" />
+          </label>
+          <button class="reset-button" id="reset-button" type="button">Clear</button>
+        </div>
+        <p class="hint">Supported input: PNG, JPEG, WebP, and other browser-readable image files.</p>
+
+        <div class="preview-frame" id="preview-frame">
+          <img id="preview" alt="Selected QR code image preview" />
+        </div>
+
+        <div class="status-block" aria-live="polite">
+          <p id="status">Waiting for an image.</p>
+          <p id="meta"></p>
+          <div id="result" hidden></div>
+          <div id="error" hidden></div>
+        </div>
+      </section>
+    </main>
+
+    <script type="module">
+      import { decodeQRFile } from "./src/index.js";
+
+      const fileInput = document.querySelector("#file-input");
+      const resetButton = document.querySelector("#reset-button");
+      const previewFrame = document.querySelector("#preview-frame");
+      const preview = document.querySelector("#preview");
+      const status = document.querySelector("#status");
+      const meta = document.querySelector("#meta");
+      const resultOutput = document.querySelector("#result");
+      const errorOutput = document.querySelector("#error");
+      let previewUrl = null;
+
+      function clearMessages() {
+        meta.textContent = "";
+        resultOutput.textContent = "";
+        resultOutput.hidden = true;
+        errorOutput.textContent = "";
+        errorOutput.hidden = true;
+      }
+
+      function reset() {
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
+        previewUrl = null;
+        fileInput.value = "";
+        preview.removeAttribute("src");
+        previewFrame.style.display = "none";
+        resetButton.style.display = "none";
+        status.textContent = "Waiting for an image.";
+        clearMessages();
+      }
+
+      function showResult(result, elapsed) {
+        status.textContent = result.success ? "Decoded successfully." : "Decoding failed.";
+        meta.textContent = [
+          `Time: ${elapsed} ms`,
+          `Encoding: ${result.encoding ?? "-"}`,
+          `Detected: ${result.detectedEncoding ?? "-"}`,
+          `Preprocess: ${result.version ?? "-"}`,
+        ].join("  ·  ");
+
+        if (result.success) {
+          resultOutput.textContent = result.text ?? "";
+          resultOutput.hidden = false;
+        } else {
+          errorOutput.textContent = result.error || "Unknown decoding error.";
+          errorOutput.hidden = false;
+        }
+      }
+
+      async function decode(file) {
+        if (!file) return;
+
+        clearMessages();
+        status.textContent = "Decoding…";
+        resetButton.style.display = "inline-block";
+        fileInput.disabled = true;
+        resetButton.disabled = true;
+
+        previewUrl = URL.createObjectURL(file);
+        preview.src = previewUrl;
+        previewFrame.style.display = "block";
+
+        const startedAt = performance.now();
+        try {
+          const result = await decodeQRFile(file);
+          showResult(result, Math.round(performance.now() - startedAt));
+        } catch (error) {
+          status.textContent = "Unexpected error.";
+          errorOutput.textContent = error instanceof Error ? error.message : String(error);
+          errorOutput.hidden = false;
+        } finally {
+          fileInput.disabled = false;
+          resetButton.disabled = false;
+        }
+      }
+
+      fileInput.addEventListener("change", () => decode(fileInput.files?.[0]));
+      resetButton.addEventListener("click", reset);
+    </script>
+  </body>
+</html>
