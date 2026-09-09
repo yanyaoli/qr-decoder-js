@@ -2,7 +2,12 @@
 // extraction of the raw bytes, then encoding detection with fallback decoding.
 
 import { readBarcodesFromImageData, detectEncoding } from './wasm-loader';
-import { preprocessImageData } from './preprocess';
+import {
+  preprocessImageData,
+  generatePreprocessVariants,
+  generateShearVariants,
+  generateDotMatrixFixVariants,
+} from './preprocess';
 import { decodeWithFallback, normalizeEncoding } from './encoding';
 
 const DEFAULT_READER_OPTIONS = {
@@ -34,12 +39,17 @@ export async function decodeQRImageData(imageData, options = {}) {
 
   const readerOptions = { ...DEFAULT_READER_OPTIONS, ...options };
 
-  // 1. Preprocess into several channel versions and try to decode each one.
-  const versions = preprocessImageData(imageData);
+  // 1. Build the ordered list of decode attempts:
+  //    - original image first (fast path for normal QR codes);
+  //    - channel-preprocessed variants (colored / light-colored codes);
+  //    - quiet-zone / padded variants as a last resort (edge-cropped codes).
+  //    Candidates are produced lazily so a success on an early stage skips the
+  //    remaining (and more expensive) attempts.
+  const attempts = buildDecodeAttempts(imageData);
 
   let rawBytes = null;
   let successVersion = null;
-  for (const ver of versions) {
+  for (const ver of attempts) {
     let results;
     try {
       results = await readBarcodesFromImageData(ver.data, readerOptions);
@@ -95,6 +105,122 @@ export async function decodeQRImageData(imageData, options = {}) {
     detectedEncoding: rawDetected,
     version: successVersion,
   };
+}
+
+/**
+ * Build the ordered list of decode attempts (lazily, so a fast success on an
+ * early stage skips the remaining work):
+ *
+ *   Stage 1 - the untouched original image (regular QR codes return instantly);
+ *   Stage 2 - dot-matrix / pin-printer rescue: red channel + morphological close
+ *             (healed gray and hard-binarized versions) for broken-ink codes;
+ *   Stage 3 - channel rescue: pure red channel + (2*R - B) difference, tuned for
+ *             blue-ink and low-contrast codes;
+ *   Stage 4 - extra channel separations (blue/green/gray/inverted) kept from the
+ *             classic pipeline for other colorings;
+ *   Stage 5 - quiet-zone padding (white border) for codes cropped to the image
+ *             edge / skewed angles, plus its red-channel rescue;
+ *   Stage 6 - affine shear / perspective compensation for steep camera angles
+ *             (each sheared frame is also tried through the red channel).
+ *
+ * Quiet-zone stages need a canvas, so they are skipped in DOM-less environments.
+ *
+ * @param {ImageData} imageData
+ * @yields {{ data: ImageData, label: string }}
+ */
+function* buildDecodeAttempts(imageData) {
+  // Stage 1: original.
+  yield { data: imageData, label: 'original' };
+
+  // Stage 2: dot-matrix broken-ink rescue (cheap, pure pixel ops; high value for
+  // pin-printer codes).
+  for (const variant of generateDotMatrixFixVariants(imageData)) {
+    yield { data: variant.data, label: variant.label };
+  }
+
+  // Stage 3: blue / low-contrast rescue.
+  for (const variant of generatePreprocessVariants(imageData)) {
+    yield { data: variant.data, label: variant.label };
+  }
+
+  // Stage 4: remaining robustness channel splits. Skip 'original' (already tried)
+  // and 'red' (identical to the 'red-channel' rescue above).
+  for (const ver of preprocessImageData(imageData)) {
+    if (ver.label === 'original' || ver.label === 'red') continue;
+    yield ver;
+  }
+
+  // Stage 5: quiet-zone (canvas required). Never fail the whole decode just
+  // because this last-resort padding could not be produced.
+  let bordered = null;
+  try {
+    bordered = addQuietZoneForImageData(imageData);
+  } catch (e) {
+    console.warn('Quiet-zone padding failed, skipping bordered attempts:', e);
+  }
+  if (bordered) {
+    yield { data: bordered, label: 'quiet-zone' };
+    const [redVariant] = generatePreprocessVariants(bordered);
+    yield { data: redVariant.data, label: 'quiet-zone-red' };
+  }
+
+  // Stage 6: shear / perspective compensation for codes shot at steep angles.
+  // Most expensive stage, so it only runs after everything above has failed.
+  for (const variant of generateShearVariants(imageData)) {
+    yield { data: variant.data, label: variant.label };
+    // Stage 6.2: shear + red channel, for steep-angle blue-ink codes.
+    const [redOfShear] = generatePreprocessVariants(variant.data);
+    yield { data: redOfShear.data, label: `${variant.label}-red` };
+  }
+}
+
+/**
+ * Pad an image with a white border (mirrors Python's copyMakeBorder). This gives
+ * ZXing a proper quiet zone for QR codes that are cropped flush against the image
+ * edge or tilted in the frame.
+ *
+ * @param {HTMLCanvasElement|OffscreenCanvas} canvas
+ * @param {number} [borderSize=40]
+ * @returns {ImageData|null} The padded image, or null when no canvas is available.
+ */
+export function addQuietZone(canvas, borderSize = 40) {
+  const target = createCanvas(canvas.width + borderSize * 2, canvas.height + borderSize * 2);
+  if (!target) return null;
+  const ctx = target.getContext('2d');
+  if (!ctx) return null;
+
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(0, 0, target.width, target.height);
+  ctx.drawImage(canvas, borderSize, borderSize);
+  return ctx.getImageData(0, 0, target.width, target.height);
+}
+
+/** Pad an ImageData with a white border without touching the input image. */
+function addQuietZoneForImageData(imageData, borderSize) {
+  const { width, height } = imageData;
+  const source = createCanvas(width, height);
+  if (!source) return null;
+  const sourceCtx = source.getContext('2d');
+  if (!sourceCtx) return null;
+
+  sourceCtx.putImageData(imageData, 0, 0);
+
+  const size = borderSize || Math.max(32, Math.round(width * 0.1));
+  return addQuietZone(source, size);
+}
+
+/** Create a 2d-capable canvas, preferring OffscreenCanvas outside of documents. */
+function createCanvas(width, height) {
+  if (typeof OffscreenCanvas !== 'undefined') {
+    return new OffscreenCanvas(width, height);
+  }
+  if (typeof document !== 'undefined' && typeof document.createElement === 'function') {
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    return canvas;
+  }
+  return null;
 }
 
 /**
