@@ -1,6 +1,6 @@
 {
   "name": "qr-decoder-js",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Browser QR code decoder with character encoding detection and fallback decoding to reduce garbled Chinese and non-UTF-8 text.",
   "type": "module",
   "main": "./dist/qr-decoder.umd.cjs",
@@ -26,7 +26,7 @@
     "build": "vite build",
     "build:demo": "vite build --config vite.demo.config.js",
     "postbuild": "node -e \"require('fs').copyFileSync('src/types.d.ts', 'dist/index.d.ts')\"",
-    "preview": "vite preview"
+    "preview": "vite preview --outDir dist-demo"
   },
   "keywords": [
     "qrcode",

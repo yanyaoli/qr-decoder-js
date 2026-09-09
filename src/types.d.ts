@@ -6,7 +6,7 @@ export interface DecodeResult {
   encoding?: string;
   /** Raw detection result from ced-wasm (e.g. "GBK"); may be empty. */
   detectedEncoding?: string | null;
-  /** Preprocess version that matched: original / blue / green / red / gray / inverted. */
+  /** Preprocess version that matched: original / dot-matrix-healed-gray / dot-matrix-binary / red-channel / blue-enhanced / blue / green / gray / inverted / quiet-zone / quiet-zone-red / shear-* (incl. shear-*-red). */
   version?: string;
   error?: string;
 }
