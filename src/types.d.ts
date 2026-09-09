@@ -6,12 +6,15 @@ export interface DecodeResult {
   encoding?: string;
   /** Raw detection result from ced-wasm (e.g. "GBK"); may be empty. */
   detectedEncoding?: string | null;
-  /** Preprocess version that matched: original / dot-matrix-healed-gray / dot-matrix-binary / red-channel / blue-enhanced / blue / green / gray / inverted / quiet-zone / quiet-zone-red / shear-* (incl. shear-*-red). */
+  /** Preprocess version that matched: original / dot-matrix-healed-gray / dot-matrix-binary / red-channel / blue-enhanced / otsu-binary / blue / green / gray / inverted / clahe-gray / clahe-red / quiet-zone / quiet-zone-red / perspective-q* / shear-* (incl. shear-*-red). */
   version?: string;
   error?: string;
 }
 
 export interface ReaderOptions {
+  /** Rescue depth: fast = original only, balanced = + color/grayscale/Otsu rescues,
+   *  aggressive (default) = + quiet-zone and shear compensation. Decoder-level. */
+  mode?: 'fast' | 'balanced' | 'aggressive';
   formats?: string[];
   tryRotate?: boolean;
   tryInvert?: boolean;

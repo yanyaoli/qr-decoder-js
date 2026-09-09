@@ -321,3 +321,213 @@ export function generateDotMatrixFixVariants(imageData, threshold = 135) {
     { data: new ImageData(out2, width, height), label: 'dot-matrix-binary' },
   ];
 }
+
+/**
+ * Pure-pixel grayscale operators. These mirror the classic luma/blue-elimination
+ * pipeline: they take an RGBA ImageData and return a flat grayscale plane, so they
+ * can be chained with Otsu binarization or fed to zxing after grayToImageData.
+ */
+
+/** Standard luma grayscale (Rec.601): 0.299R + 0.587G + 0.114B. */
+export function toGray(imgData) {
+  const { data, width, height } = imgData;
+  const gray = new Uint8ClampedArray(width * height);
+  for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+    gray[p] = (data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114 + 0.5) | 0;
+  }
+  return gray;
+}
+
+/**
+ * Blue-elimination enhancement: R + G - B. Suitable for blue-tinted backgrounds /
+ * carbon-copy forms where standard luma is diluted by the blue component; removing
+ * B pushes the (dark) modules back toward black while white stays high.
+ */
+export function toBlueEnhanced(imgData) {
+  const { data, width, height } = imgData;
+  const gray = new Uint8ClampedArray(width * height);
+  for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    gray[p] = Math.max(0, Math.min(255, Math.round(r + g - b)));
+  }
+  return gray;
+}
+
+/** Convert a flat grayscale plane back into an RGBA ImageData (alpha = 255). */
+export function grayToImageData(gray, width, height) {
+  const rgba = new Uint8ClampedArray(width * height * 4);
+  for (let i = 0, p = 0; i < gray.length; i++, p += 4) {
+    const v = gray[i];
+    rgba[p] = v;
+    rgba[p + 1] = v;
+    rgba[p + 2] = v;
+    rgba[p + 3] = 255;
+  }
+  return new ImageData(rgba, width, height);
+}
+
+/**
+ * Otsu global-threshold binarization over a grayscale plane (dark = module).
+ * Best at splitting a bimodal histogram (e.g. glare / weak print contrast).
+ *
+ * @param {Uint8ClampedArray} gray
+ * @param {number} width
+ * @param {number} height
+ * @returns {Uint8ClampedArray} 0/255 binary plane
+ */
+export function toOtsuBinary(gray, width, height) {
+  const total = gray.length;
+  const hist = new Int32Array(256);
+  for (let i = 0; i < total; i++) hist[gray[i]]++;
+
+  let sum = 0;
+  for (let t = 0; t < 256; t++) sum += t * hist[t];
+
+  let sumB = 0;
+  let wB = 0;
+  let maxVar = -1;
+  let thr = 127;
+  for (let t = 0; t < 256; t++) {
+    wB += hist[t];
+    if (!wB) continue;
+    const wF = total - wB;
+    if (!wF) break;
+    sumB += t * hist[t];
+    const mB = sumB / wB;
+    const mF = (sum - sumB) / wF;
+    const between = wB * wF * (mB - mF) * (mB - mF);
+    if (between > maxVar) {
+      maxVar = between;
+      thr = t;
+    }
+  }
+
+  const bin = new Uint8ClampedArray(total);
+  for (let i = 0; i < total; i++) {
+    bin[i] = gray[i] > thr ? 255 : 0;
+  }
+  return bin;
+}
+
+/**
+ * CLAHE (Contrast Limited Adaptive Histogram Equalization) on a grayscale plane.
+ * Handles locally uneven illumination / low light that defeats a single global
+ * stretch: the image is split into tiles, each equalized with a clipped histogram
+ * (so noise is not amplified), then pixels are blended between neighboring tiles.
+ *
+ * @param {Uint8ClampedArray} gray
+ * @param {number} width
+ * @param {number} height
+ * @param {object} [opts]
+ * @param {number} [opts.clipLimit=2.0]
+ * @param {number} [opts.tileSize=8]
+ * @returns {Uint8ClampedArray}
+ */
+export function toCLAHE(gray, width, height, opts = {}) {
+  const { clipLimit = 2.0, tileSize = 8 } = opts;
+  const clip = Math.max(1, Math.round((clipLimit * width * height) / (tileSize * tileSize)));
+
+  const out = new Uint8ClampedArray(gray.length);
+  // Per-tile cumulative mapping (each tile stores 256-byte LUTs).
+  const maps = [];
+
+  // Build histograms per tile.
+  for (let ty = 0; ty < tileSize; ty++) {
+    for (let tx = 0; tx < tileSize; tx++) {
+      const hist = new Int32Array(256);
+      const x0 = Math.floor((tx * width) / tileSize);
+      const x1 = Math.floor(((tx + 1) * width) / tileSize);
+      const y0 = Math.floor((ty * height) / tileSize);
+      const y1 = Math.floor(((ty + 1) * height) / tileSize);
+      for (let y = y0; y < y1; y++) {
+        const row = y * width;
+        for (let x = x0; x < x1; x++) {
+          hist[gray[row + x]]++;
+        }
+      }
+
+      // Clip and redistribute the excess.
+      let excess = 0;
+      for (let i = 0; i < 256; i++) {
+        if (hist[i] > clip) {
+          excess += hist[i] - clip;
+          hist[i] = clip;
+        }
+      }
+      const bonus = Math.floor(excess / 256);
+      let rem = excess - bonus * 256;
+      for (let i = 0; i < 256; i++) hist[i] += bonus;
+      for (let i = 0; i < 256 && rem > 0; i++, rem--) hist[i] += 1;
+
+      // Cumulative distribution -> mapping.
+      const total = (x1 - x0) * (y1 - y0) || 1;
+      let sum = 0;
+      const map = new Uint8ClampedArray(256);
+      for (let i = 0; i < 256; i++) {
+        sum += hist[i];
+        map[i] = Math.round((sum * 255) / total);
+      }
+      maps.push(map);
+    }
+  }
+
+  // Bilinear blend between the four surrounding tile mappings.
+  for (let y = 0; y < height; y++) {
+    const fy = ((y + 0.5) / height) * tileSize - 0.5;
+    const ty0 = Math.max(0, Math.min(tileSize - 1, Math.floor(fy)));
+    const ty1 = Math.max(0, Math.min(tileSize - 1, ty0 + 1));
+    const wy = Math.max(0, Math.min(1, fy - ty0));
+    for (let x = 0; x < width; x++) {
+      const fx = ((x + 0.5) / width) * tileSize - 0.5;
+      const tx0 = Math.max(0, Math.min(tileSize - 1, Math.floor(fx)));
+      const tx1 = Math.max(0, Math.min(tileSize - 1, tx0 + 1));
+      const wx = Math.max(0, Math.min(1, fx - tx0));
+
+      const v = gray[y * width + x];
+      const m00 = maps[ty0 * tileSize + tx0][v];
+      const m01 = maps[ty0 * tileSize + tx1][v];
+      const m10 = maps[ty1 * tileSize + tx0][v];
+      const m11 = maps[ty1 * tileSize + tx1][v];
+      const top = m00 + (m01 - m00) * wx;
+      const bottom = m10 + (m11 - m10) * wx;
+      out[y * width + x] = top + (bottom - top) * wy;
+    }
+  }
+
+  return out;
+}
+
+/**
+ * Otsu thresholding on a grayscale plane. Returns the computed threshold value.
+ *
+ * @param {Uint8ClampedArray} gray
+ * @returns {number}
+ */
+export function otsuThreshold(gray) {
+  const total = gray.length;
+  const hist = new Int32Array(256);
+  for (let i = 0; i < total; i++) hist[gray[i]]++;
+  let sum = 0;
+  for (let t = 0; t < 256; t++) sum += t * hist[t];
+  let sumB = 0;
+  let wB = 0;
+  let maxVar = -1;
+  let thr = 127;
+  for (let t = 0; t < 256; t++) {
+    wB += hist[t];
+    if (!wB) continue;
+    const wF = total - wB;
+    if (!wF) break;
+    sumB += t * hist[t];
+    const mB = sumB / wB;
+    const mF = (sum - sumB) / wF;
+    const between = wB * wF * (mB - mF) * (mB - mF);
+    if (between > maxVar) {
+      maxVar = between;
+      thr = t;
+    }
+  }
+  return thr;
+}

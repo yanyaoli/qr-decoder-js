@@ -7,8 +7,12 @@ import {
   generatePreprocessVariants,
   generateShearVariants,
   generateDotMatrixFixVariants,
+  toGray,
+  toOtsuBinary,
+  grayToImageData,
 } from './preprocess';
 import { decodeWithFallback, normalizeEncoding } from './encoding';
+import { generateCLAHEVariants, generatePerspectiveVariants } from './perspective';
 
 const DEFAULT_READER_OPTIONS = {
   formats: ['QRCode'],
@@ -20,11 +24,21 @@ const DEFAULT_READER_OPTIONS = {
   maxNumberOfSymbols: 1,
 };
 
+const MODES = ['fast', 'balanced', 'aggressive'];
+
 /**
  * Decode a QR code from ImageData.
  *
  * @param {ImageData} imageData
  * @param {object} [options] ReaderOptions passed through to zxing (formats/tryHarder/...)
+ *   plus the decoder-level `mode` selector.
+ * @param {'fast'|'balanced'|'aggressive'} [options.mode] Controls how many rescue
+ *   attempts run after the original image fails:
+ *   - fast      - original only (video frames; lowest latency);
+ *   - balanced  - original + channel/color rescue (grayscale, Otsu, red/2R-B,
+ *                 dot-matrix); no canvas transforms;
+ *   - aggressive - everything incl. quiet-zone padding and shear compensation
+ *                 (single stills / hardest cases). Default.
  * @returns {Promise<import('../types').DecodeResult>}
  */
 export async function decodeQRImageData(imageData, options = {}) {
@@ -37,7 +51,9 @@ export async function decodeQRImageData(imageData, options = {}) {
     return { success: false, error: 'Invalid image data (expected ImageData or {width,height,data})' };
   }
 
-  const readerOptions = { ...DEFAULT_READER_OPTIONS, ...options };
+  const { mode = 'aggressive', ...zxingOptions } = options;
+  const effectiveMode = MODES.includes(mode) ? mode : 'aggressive';
+  const readerOptions = { ...DEFAULT_READER_OPTIONS, ...zxingOptions };
 
   // 1. Build the ordered list of decode attempts:
   //    - original image first (fast path for normal QR codes);
@@ -45,7 +61,7 @@ export async function decodeQRImageData(imageData, options = {}) {
   //    - quiet-zone / padded variants as a last resort (edge-cropped codes).
   //    Candidates are produced lazily so a success on an early stage skips the
   //    remaining (and more expensive) attempts.
-  const attempts = buildDecodeAttempts(imageData);
+  const attempts = buildDecodeAttempts(imageData, effectiveMode);
 
   let rawBytes = null;
   let successVersion = null;
@@ -109,39 +125,47 @@ export async function decodeQRImageData(imageData, options = {}) {
 
 /**
  * Build the ordered list of decode attempts (lazily, so a fast success on an
- * early stage skips the remaining work):
+ * early stage skips the remaining work). Depth follows `mode`:
  *
- *   Stage 1 - the untouched original image (regular QR codes return instantly);
- *   Stage 2 - dot-matrix / pin-printer rescue: red channel + morphological close
- *             (healed gray and hard-binarized versions) for broken-ink codes;
- *   Stage 3 - channel rescue: pure red channel + (2*R - B) difference, tuned for
- *             blue-ink and low-contrast codes;
- *   Stage 4 - extra channel separations (blue/green/gray/inverted) kept from the
- *             classic pipeline for other colorings;
- *   Stage 5 - quiet-zone padding (white border) for codes cropped to the image
- *             edge / skewed angles, plus its red-channel rescue;
- *   Stage 6 - affine shear / perspective compensation for steep camera angles
- *             (each sheared frame is also tried through the red channel).
+ *   fast
+ *     Stage 1 - original (video frames: zero extra operators)
+ *   balanced
+ *     Stage 1 - original
+ *     Stage 2 - dot-matrix / pin-printer rescue (red + morphological close)
+ *     Stage 3 - channel rescue: red + (2*R - B), then grayscale/Otsu
+ *     Stage 4 - channel separations (blue/green/gray/inverted)
+ *   aggressive (default)
+ *     everything in balanced
+ *     Stage 5 - CLAHE (local-contrast) gray/red variants for uneven lighting
+ *     Stage 6 - quiet-zone padding (+ red variant) for edge-cropped codes
+ *     Stage 7 - perspective correction: locate the code quad, homography-warp it
+ *               to a canonical square (front-facing) for steep-angle shots
+ *     Stage 8 - affine shear / perspective compensation for steep angles
  *
- * Quiet-zone stages need a canvas, so they are skipped in DOM-less environments.
+ * Canvas-based stages (quiet-zone / shear) are skipped in DOM-less environments.
  *
  * @param {ImageData} imageData
+ * @param {'fast'|'balanced'|'aggressive'} mode
  * @yields {{ data: ImageData, label: string }}
  */
-function* buildDecodeAttempts(imageData) {
-  // Stage 1: original.
-  yield { data: imageData, label: 'original' };
+function* buildDecodeAttempts(imageData, mode = 'aggressive') {
+  const { width, height } = imageData;
 
-  // Stage 2: dot-matrix broken-ink rescue (cheap, pure pixel ops; high value for
-  // pin-printer codes).
+  // Stage 1: original (always tried first).
+  yield { data: imageData, label: 'original' };
+  if (mode === 'fast') return;
+
+  // Stage 2: dot-matrix broken-ink rescue (cheap pure pixel ops).
   for (const variant of generateDotMatrixFixVariants(imageData)) {
     yield { data: variant.data, label: variant.label };
   }
 
-  // Stage 3: blue / low-contrast rescue.
+  // Stage 3: blue / low-contrast rescue + grayscale/Otsu.
   for (const variant of generatePreprocessVariants(imageData)) {
     yield { data: variant.data, label: variant.label };
   }
+  const gray = toGray(imageData);
+  yield { data: grayToImageData(toOtsuBinary(gray, width, height), width, height), label: 'otsu-binary' };
 
   // Stage 4: remaining robustness channel splits. Skip 'original' (already tried)
   // and 'red' (identical to the 'red-channel' rescue above).
@@ -150,7 +174,14 @@ function* buildDecodeAttempts(imageData) {
     yield ver;
   }
 
-  // Stage 5: quiet-zone (canvas required). Never fail the whole decode just
+  if (mode === 'balanced') return;
+
+  // Stage 5: CLAHE local-contrast enhancement (uneven light / low light).
+  for (const variant of generateCLAHEVariants(imageData)) {
+    yield { data: variant.data, label: variant.label };
+  }
+
+  // Stage 6: quiet-zone (canvas required). Never fail the whole decode just
   // because this last-resort padding could not be produced.
   let bordered = null;
   try {
@@ -164,11 +195,21 @@ function* buildDecodeAttempts(imageData) {
     yield { data: redVariant.data, label: 'quiet-zone-red' };
   }
 
-  // Stage 6: shear / perspective compensation for codes shot at steep angles.
-  // Most expensive stage, so it only runs after everything above has failed.
+  // Stage 7: perspective (homography) correction. Locate the QR quad then warp it
+  // back to a front-facing square. Pure pixel, but still expensive, so bounded.
+  try {
+    for (const variant of generatePerspectiveVariants(imageData, { sizes: [520, 650], expansions: [0, 0.03] })) {
+      yield { data: variant.data, label: variant.label };
+    }
+  } catch (e) {
+    console.warn('Perspective-correction stage failed, skipping:', e);
+  }
+
+  // Stage 8: affine shear / perspective compensation for codes shot at steep
+  // angles. Most expensive stage, so it only runs after everything above failed.
   for (const variant of generateShearVariants(imageData)) {
     yield { data: variant.data, label: variant.label };
-    // Stage 6.2: shear + red channel, for steep-angle blue-ink codes.
+    // Stage 8.2: shear + red channel, for steep-angle blue-ink codes.
     const [redOfShear] = generatePreprocessVariants(variant.data);
     yield { data: redOfShear.data, label: `${variant.label}-red` };
   }
