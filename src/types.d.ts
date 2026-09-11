@@ -1,19 +1,22 @@
 export interface DecodeResult {
   success: boolean;
-  /** The decoded text. */
+  /** The decoded text content. */
   text?: string;
-  /** The TextDecoder label that was ultimately used. */
+  /** The TextDecoder character encoding label used (e.g. "utf-8", "gb18030", "shift_jis"). */
   encoding?: string;
-  /** Raw detection result from ced-wasm (e.g. "GBK"); may be empty. */
+  /** Detected encoding identifier. */
   detectedEncoding?: string | null;
-  /** Preprocess version that matched: original / dot-matrix-healed-gray / dot-matrix-binary / red-channel / blue-enhanced / otsu-binary / blue / green / gray / inverted / clahe-gray / clahe-red / quiet-zone / quiet-zone-red / perspective-q* / shear-* (incl. shear-*-red). */
+  /** Preprocess version that matched: original / blue-enhanced / red-channel / dot-matrix-healed / otsu-binary / inverted. */
   version?: string;
   error?: string;
 }
 
 export interface ReaderOptions {
-  /** Rescue depth: fast = original only, balanced = + color/grayscale/Otsu rescues,
-   *  aggressive (default) = + quiet-zone and shear compensation. Decoder-level. */
+  /** Rescue depth:
+   *  - fast: original only (fastest for high-framerate video stream)
+   *  - balanced: original + blue-enhanced (2*R-B) + red-channel (default)
+   *  - aggressive: balanced + dot-matrix healing + otsu binary + inverted
+   */
   mode?: 'fast' | 'balanced' | 'aggressive';
   formats?: string[];
   tryRotate?: boolean;
