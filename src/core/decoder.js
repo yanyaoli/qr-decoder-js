@@ -14,6 +14,7 @@ import {
   generateDotMatrixFixVariants,
   toGray,
   toOtsuBinary,
+  toAdaptiveBinary,
   grayToImageData,
 } from './preprocess';
 import { decodeWithFallback } from './encoding';
@@ -35,10 +36,11 @@ const MODES = ['fast', 'balanced', 'aggressive'];
  *
  * @param {ImageData} imageData
  * @param {object} [options]
- * @param {'fast'|'balanced'|'aggressive'} [options.mode]
+ * @param {'fast'|'balanced'|'aggressive'} [options.mode='aggressive']
  *   - fast: original only;
  *   - balanced: original + contrast-stretched red/blue-enhanced + sharpen + CLAHE + fast tilt shear + center-zoom;
- *   - aggressive: balanced + full 6-angle shear + quiet-zone + dot-matrix + otsu + inverted.
+ *   - aggressive: balanced + full 6-angle shear + color-aware quiet-zone, morphology,
+ *     Otsu, adaptive-binary, and inverted variants.
  * @returns {Promise<import('../types').DecodeResult>}
  */
 export async function decodeQRImageData(imageData, options = {}) {
@@ -51,7 +53,7 @@ export async function decodeQRImageData(imageData, options = {}) {
     return { success: false, error: 'Invalid image data (expected ImageData or {width,height,data})' };
   }
 
-  const { mode = 'balanced', ...zxingOptions } = options;
+  const { mode = 'aggressive', ...zxingOptions } = options;
   const effectiveMode = MODES.includes(mode) ? mode : 'balanced';
   const readerOptions = { ...DEFAULT_READER_OPTIONS, ...zxingOptions };
 
@@ -159,24 +161,62 @@ function* buildDecodeAttempts(imageData, mode = 'balanced') {
     yield { data: variant.data, label: variant.label };
   }
 
-  // Stage 8: Quiet zone padding (Fixes edge-cropped codes)
-  const padded = addQuietZone(imageData);
-  if (padded) {
-    yield { data: padded, label: 'quiet-zone' };
+  // Stage 8: Pad each color-rescue channel so edge-cropped codes regain a quiet zone.
+  const quietZoneSources = [
+    { data: imageData, label: 'quiet-zone' },
+    ...preprocessVariants.map((variant) => ({
+      data: variant.data,
+      label: `quiet-zone-${variant.label}`,
+    })),
+  ];
+  for (const source of quietZoneSources) {
+    const padded = addQuietZone(source.data);
+    if (padded) {
+      yield { data: padded, label: source.label };
+    }
   }
 
-  // Stage 9: Aggressive rescue for difficult cases (dot-matrix pin printer, otsu, inverted)
-  for (const variant of generateDotMatrixFixVariants(imageData)) {
-    yield { data: variant.data, label: variant.label };
+  // Stage 9: Apply morphology and thresholding to every useful source channel.
+  const rescueSources = [
+    { data: imageData, label: '' },
+    ...preprocessVariants.map((variant) => ({
+      data: variant.data,
+      label: `${variant.label}-`,
+    })),
+  ];
+  for (const source of rescueSources) {
+    for (const variant of generateDotMatrixFixVariants(source.data)) {
+      yield { data: variant.data, label: `${source.label}${variant.label}` };
+    }
   }
 
-  const gray = toGray(imageData);
-  yield {
-    data: grayToImageData(toOtsuBinary(gray, width, height), width, height),
-    label: 'otsu-binary',
-  };
+  const binarySources = [
+    { data: imageData, label: 'gray' },
+    ...preprocessVariants.map((variant) => ({
+      data: variant.data,
+      label: variant.label,
+    })),
+  ];
+  for (const source of binarySources) {
+    const sourceGray = toGray(source.data);
+    yield {
+      data: grayToImageData(toOtsuBinary(sourceGray, width, height), width, height),
+      label: `otsu-binary-${source.label}`,
+    };
+  }
 
-  yield generateInvertedVariant(imageData);
+  for (const source of binarySources) {
+    const sourceGray = toGray(source.data);
+    yield {
+      data: grayToImageData(toAdaptiveBinary(sourceGray, width, height), width, height),
+      label: `adaptive-binary-${source.label}`,
+    };
+  }
+
+  for (const source of binarySources) {
+    const inverted = generateInvertedVariant(source.data);
+    yield { data: inverted.data, label: `inverted-${source.label}` };
+  }
 }
 
 /**

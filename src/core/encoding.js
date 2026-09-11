@@ -50,7 +50,7 @@ const encodingAliasMap = {
 };
 
 /**
- * Normalize an encoding name (e.g. from CED) into a label understood by TextDecoder.
+ * Normalize an encoding name into a label understood by TextDecoder.
  * Example: "GBK" -> "gbk", "Shift_JIS" -> "shift_jis".
  */
 export function normalizeEncoding(enc) {
@@ -141,7 +141,7 @@ export function scoreText(text) {
  * Uses native TextDecoder with automatic validation and heuristic scoring.
  *
  * @param {Uint8Array} bytes
- * @param {string} [detectedEncoding] Encoding suggested by external detector (e.g. CED).
+ * @param {string} [detectedEncoding] Optional encoding hint from the caller.
  * @returns {{ text: string, score: number, encoding: string }}
  */
 export function decodeWithFallback(bytes, detectedEncoding) {

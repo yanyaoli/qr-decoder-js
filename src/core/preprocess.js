@@ -2,6 +2,8 @@
 // sharpening, CLAHE, center-zoom, Otsu binarization, and perspective tilt shear compensation.
 // Rescues colored, blue-ink, low-contrast, blurred, distant, inverted, and tilted QR codes.
 
+// ImageData creation and geometric transforms
+
 /**
  * Safe factory for ImageData or ImageData-compatible pixel container.
  * Compatible with Browser DOM, Web Workers, OffscreenCanvas, and headless environments.
@@ -36,6 +38,14 @@ export function createImageData(width, height) {
   };
 }
 
+/**
+ * Create a canvas when a browser or worker canvas API is available.
+ * Returns null so callers can use their CPU fallback in headless environments.
+ *
+ * @param {number} width
+ * @param {number} height
+ * @returns {HTMLCanvasElement|OffscreenCanvas|null}
+ */
 function createCanvas(width, height) {
   if (typeof OffscreenCanvas !== 'undefined') {
     return new OffscreenCanvas(width, height);
@@ -116,6 +126,8 @@ export function generatePreprocessVariants(imageData) {
   ];
 }
 
+// Channel enhancement and local contrast transforms
+
 /**
  * 3x3 Laplacian edge-sharpening (Unsharp Mask) filter.
  * Directly restores blurry, out-of-focus, and low-contrast module transitions.
@@ -129,17 +141,17 @@ export function sharpenImageData(imageData, amount = 1.2) {
   const out = createImageData(width, height);
   const oData = out.data;
 
-  for (let y = 1; y < height - 1; y++) {
+  for (let y = 0; y < height; y++) {
     const row = y * width;
-    const upRow = (y - 1) * width;
-    const downRow = (y + 1) * width;
-    for (let x = 1; x < width - 1; x++) {
+    const upRow = Math.max(0, y - 1) * width;
+    const downRow = Math.min(height - 1, y + 1) * width;
+    for (let x = 0; x < width; x++) {
       const idx = (row + x) * 4;
       const c = data[idx];
       const u = data[(upRow + x) * 4];
       const d = data[(downRow + x) * 4];
-      const l = data[(row + x - 1) * 4];
-      const r = data[(row + x + 1) * 4];
+      const l = data[(row + Math.max(0, x - 1)) * 4];
+      const r = data[(row + Math.min(width - 1, x + 1)) * 4];
       const laplacian = 5 * c - u - d - l - r;
       const val = Math.max(0, Math.min(255, Math.round(c * (1 - amount) + laplacian * amount)));
       oData[idx] = val;
@@ -307,6 +319,8 @@ export function generateShearVariants(
 
   return variants;
 }
+
+// Quiet-zone, inversion, and binary repair transforms
 
 /**
  * Pad an image with a clean white quiet zone border.
@@ -505,6 +519,55 @@ export function toOtsuBinary(gray, width, height) {
 }
 
 /**
+ * Local adaptive thresholding for unevenly lit or low-contrast QR images.
+ * Uses an integral image so the per-pixel neighborhood mean stays linear-time.
+ *
+ * @param {Uint8ClampedArray} gray
+ * @param {number} width
+ * @param {number} height
+ * @param {number} [radius=8]
+ * @param {number} [bias=0.15]
+ * @returns {Uint8ClampedArray}
+ */
+export function toAdaptiveBinary(gray, width, height, radius = 8, bias = 0.15) {
+  const stride = width + 1;
+  const integral = new Int32Array((width + 1) * (height + 1));
+  const out = new Uint8ClampedArray(gray.length);
+
+  for (let y = 1; y <= height; y++) {
+    let rowSum = 0;
+    const sourceRow = (y - 1) * width;
+    const integralRow = y * stride;
+    const previousRow = (y - 1) * stride;
+    for (let x = 1; x <= width; x++) {
+      rowSum += gray[sourceRow + x - 1];
+      integral[integralRow + x] = integral[previousRow + x] + rowSum;
+    }
+  }
+
+  for (let y = 0; y < height; y++) {
+    const y0 = Math.max(0, y - radius);
+    const y1 = Math.min(height - 1, y + radius);
+    const top = y0 * stride;
+    const bottom = (y1 + 1) * stride;
+    for (let x = 0; x < width; x++) {
+      const x0 = Math.max(0, x - radius);
+      const x1 = Math.min(width - 1, x + radius);
+      const area = (x1 - x0 + 1) * (y1 - y0 + 1);
+      const sum =
+        integral[bottom + x1 + 1] -
+        integral[top + x1 + 1] -
+        integral[bottom + x0] +
+        integral[top + x0];
+      const threshold = (sum / area) * (1 - bias);
+      out[y * width + x] = gray[y * width + x] <= threshold ? 0 : 255;
+    }
+  }
+
+  return out;
+}
+
+/**
  * CLAHE (Contrast Limited Adaptive Histogram Equalization) on a grayscale plane.
  * Directly fixes blurred, poorly focused, or unevenly lit QR codes.
  *
@@ -516,7 +579,6 @@ export function toOtsuBinary(gray, width, height) {
  */
 export function toCLAHE(gray, width, height, opts = {}) {
   const { clipLimit = 2.5, tileSize = 8 } = opts;
-  const clip = Math.max(1, Math.round((clipLimit * width * height) / (tileSize * tileSize)));
 
   const out = new Uint8ClampedArray(gray.length);
   const maps = [];
@@ -528,6 +590,9 @@ export function toCLAHE(gray, width, height, opts = {}) {
       const x1 = Math.floor(((tx + 1) * width) / tileSize);
       const y0 = Math.floor((ty * height) / tileSize);
       const y1 = Math.floor(((ty + 1) * height) / tileSize);
+      // clipLimit is normalized against the 256-bin histogram of this tile.
+      const tileArea = (x1 - x0) * (y1 - y0);
+      const clip = Math.max(1, Math.round((clipLimit * tileArea) / 256));
       for (let y = y0; y < y1; y++) {
         const row = y * width;
         for (let x = x0; x < x1; x++) {

@@ -60,6 +60,12 @@ Decode a QR code from RGBA image data.
 
 Both methods return `Promise<DecodeResult>`.
 
+By default, decoding uses `mode: 'aggressive'`. It tries the original image,
+red/blue channel contrast rescue, edge sharpening, CLAHE, tilt compensation,
+quiet-zone padding, morphology, Otsu thresholding, local adaptive thresholding,
+and inversion. Use `mode: 'fast'` or `mode: 'balanced'` when lower latency is
+more important than rescue coverage.
+
 Common reader options include `tryRotate`, `tryInvert`, `tryHarder`,
 `tryDownscale`, `tryDenoise`, `maxNumberOfSymbols`, `formats`, and
 `characterSet`:
@@ -97,8 +103,10 @@ On failure, check `success` and read `error`:
 ## Browser support
 
 The target browser must support WebAssembly, `fetch`, `TextDecoder`, and
-`ImageData`. The package is intended for browser applications and does not
-provide a Node.js image adapter.
+`ImageData`. The package uses `zxing-wasm` for QR detection and native
+`TextDecoder` for encoding fallback; it does not use Google ML Kit,
+`compact_enc_det`, or `ced-wasm`. The package is intended for browser
+applications and does not provide a Node.js image adapter.
 
 ## Development
 
@@ -117,5 +125,3 @@ MIT
 This project uses and is inspired by:
 
 - [zxing-wasm](https://github.com/Sec-ant/zxing-wasm) for QR code detection.
-- [Google compact_enc_det](https://github.com/google/compact_enc_det) for character encoding detection.
-- [ced-wasm](https://github.com/neichen/ced-wasm), a WebAssembly port of `compact_enc_det`.

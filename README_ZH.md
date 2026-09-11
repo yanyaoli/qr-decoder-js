@@ -58,6 +58,11 @@ const result = await decodeQRImageData(imageData);
 
 两个方法都返回 `Promise<DecodeResult>`。
 
+默认使用 `mode: 'aggressive'`，会依次尝试原图、红/蓝通道对比度增强、锐化、
+CLAHE、倾斜校正、静区补边、形态学修复、Otsu 二值化、局部自适应二值化和反色。
+如果更重视解码延迟而不是困难图片的检出率，可以使用 `mode: 'fast'` 或
+`mode: 'balanced'`。
+
 常用选项包括 `tryRotate`、`tryInvert`、`tryHarder`、`tryDownscale`、
 `tryDenoise`、`maxNumberOfSymbols`、`formats` 和 `characterSet`：
 
@@ -94,6 +99,8 @@ interface DecodeResult {
 ## 浏览器要求
 
 目标浏览器需要支持 WebAssembly、`fetch`、`TextDecoder` 和 `ImageData`。
+二维码识别使用 `zxing-wasm`，文本编码回退使用浏览器原生 `TextDecoder`，
+当前不使用 Google ML Kit、`compact_enc_det` 或 `ced-wasm`。
 本包面向浏览器应用，不提供 Node.js 图片解码适配层。
 
 ## 本地开发
@@ -113,5 +120,3 @@ MIT
 本项目使用或参考了以下开源项目：
 
 - [zxing-wasm](https://github.com/Sec-ant/zxing-wasm)：用于二维码识别。
-- [Google compact_enc_det](https://github.com/google/compact_enc_det)：用于文本编码检测。
-- [ced-wasm](https://github.com/neichen/ced-wasm)：`compact_enc_det` 的 WebAssembly 移植版本。
