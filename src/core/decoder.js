@@ -119,7 +119,8 @@ function* buildDecodeAttempts(imageData, mode = 'balanced') {
   }
 
   // Stage 3: Sharpened red channel (directly restores blurry, out-of-focus, or distant blue QR codes)
-  const redVariant = preprocessVariants[0]; // red-stretched
+  const redVariant = preprocessVariants.find((variant) => variant.label === 'red-stretched') ||
+    preprocessVariants.find((variant) => variant.label === 'red-channel');
   if (redVariant) {
     yield {
       data: sharpenImageData(redVariant.data, 1.2),
@@ -147,7 +148,9 @@ function* buildDecodeAttempts(imageData, mode = 'balanced') {
   // Stage 6: Center crop for distant QR codes in large frames (>= 380px)
   if (width >= 380 && height >= 380) {
     const cropped = centerCrop(imageData, 0.6);
-    const [croppedRed] = generatePreprocessVariants(cropped);
+    const croppedVariants = generatePreprocessVariants(cropped);
+    const croppedRed = croppedVariants.find((variant) => variant.label === 'red-stretched') ||
+      croppedVariants.find((variant) => variant.label === 'red-channel');
     if (croppedRed) {
       yield { data: croppedRed.data, label: 'center-crop-red' };
       yield { data: sharpenImageData(croppedRed.data, 1.2), label: 'center-crop-sharpen-red' };

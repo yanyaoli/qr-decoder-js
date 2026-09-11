@@ -61,10 +61,12 @@ function createCanvas(width, height) {
 
 /**
  * Generate targeted multi-path rescue variants for colored and blue-ink QR codes.
- * Uses dynamic-range contrast stretching to maximize ink/paper gradient.
+ * Keeps the raw channel formulas first because they preserve module boundaries;
+ * stretched variants follow for images whose color range is especially narrow.
  *
- * 1. red-stretched: white paper reflects red (bright), blue ink absorbs red (dark).
- * 2. blue-enhanced-stretched: (2*R - B) cuts blue channel contribution entirely.
+ * 1. blue-enhanced: raw (2*R - B), the primary blue-ink rescue path.
+ * 2. red-channel: raw red channel, useful when blue ink absorbs red strongly.
+ * 3. blue-enhanced-stretched and red-stretched: dynamic-range rescue variants.
  *
  * @param {ImageData} imageData
  * @returns {{ data: ImageData, label: string }[]}
@@ -73,10 +75,14 @@ export function generatePreprocessVariants(imageData) {
   const { data, width, height } = imageData;
   const n = data.length;
 
-  const red = createImageData(width, height);
-  const dRed = red.data;
-  const blueEnhanced = createImageData(width, height);
-  const dBlueEnhanced = blueEnhanced.data;
+  const rawRed = createImageData(width, height);
+  const dRawRed = rawRed.data;
+  const rawBlueEnhanced = createImageData(width, height);
+  const dRawBlueEnhanced = rawBlueEnhanced.data;
+  const stretchedRed = createImageData(width, height);
+  const dStretchedRed = stretchedRed.data;
+  const stretchedBlueEnhanced = createImageData(width, height);
+  const dStretchedBlueEnhanced = stretchedBlueEnhanced.data;
 
   // Pass 1: find min and max for contrast stretching
   let minR = 255, maxR = 0;
@@ -104,25 +110,38 @@ export function generatePreprocessVariants(imageData) {
 
   for (let p = 0, i = 0; i < n; i += 4, p++) {
     const a = data[i + 3] || 255;
+    const rawRedValue = data[i];
+    const rawBlueValue = Math.max(0, Math.min(255, 2 * rawRedValue - data[i + 2]));
 
-    // Variant 1: Stretched Red Channel
-    const valR = Math.max(0, Math.min(255, Math.round(((data[i] - baseR) * 255) / rangeR)));
-    dRed[i] = valR;
-    dRed[i + 1] = valR;
-    dRed[i + 2] = valR;
-    dRed[i + 3] = a;
+    dRawRed[i] = rawRedValue;
+    dRawRed[i + 1] = rawRedValue;
+    dRawRed[i + 2] = rawRedValue;
+    dRawRed[i + 3] = a;
 
-    // Variant 2: Stretched Blue-Suppression (2*R - B)
+    dRawBlueEnhanced[i] = rawBlueValue;
+    dRawBlueEnhanced[i + 1] = rawBlueValue;
+    dRawBlueEnhanced[i + 2] = rawBlueValue;
+    dRawBlueEnhanced[i + 3] = a;
+
+    const valR = Math.max(0, Math.min(255, Math.round(((rawRedValue - baseR) * 255) / rangeR)));
+    dStretchedRed[i] = valR;
+    dStretchedRed[i + 1] = valR;
+    dStretchedRed[i + 2] = valR;
+    dStretchedRed[i + 3] = a;
+
+    // Dynamic-range blue suppression (2*R - B).
     const valDiff = Math.max(0, Math.min(255, Math.round(((diffs[p] - baseDiff) * 255) / rangeDiff)));
-    dBlueEnhanced[i] = valDiff;
-    dBlueEnhanced[i + 1] = valDiff;
-    dBlueEnhanced[i + 2] = valDiff;
-    dBlueEnhanced[i + 3] = a;
+    dStretchedBlueEnhanced[i] = valDiff;
+    dStretchedBlueEnhanced[i + 1] = valDiff;
+    dStretchedBlueEnhanced[i + 2] = valDiff;
+    dStretchedBlueEnhanced[i + 3] = a;
   }
 
   return [
-    { data: red, label: 'red-stretched' },
-    { data: blueEnhanced, label: 'blue-enhanced' },
+    { data: rawBlueEnhanced, label: 'blue-enhanced' },
+    { data: rawRed, label: 'red-channel' },
+    { data: stretchedBlueEnhanced, label: 'blue-enhanced-stretched' },
+    { data: stretchedRed, label: 'red-stretched' },
   ];
 }
 
