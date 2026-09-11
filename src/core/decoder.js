@@ -1,9 +1,15 @@
 // Main decoding pipeline: high-performance decoding using zxing-wasm
-// with targeted color rescue channels and robust universal multi-encoding detection.
+// with robust multi-channel (blue/red/contrast), edge sharpening, CLAHE, tilt shear compensation,
+// center-zoom for distant codes, and universal multi-encoding detection.
 
 import { readBarcodesFromImageData } from './wasm-loader';
 import {
   generatePreprocessVariants,
+  sharpenImageData,
+  generateCLAHEVariants,
+  generateShearVariants,
+  centerCrop,
+  addQuietZone,
   generateInvertedVariant,
   generateDotMatrixFixVariants,
   toGray,
@@ -30,9 +36,9 @@ const MODES = ['fast', 'balanced', 'aggressive'];
  * @param {ImageData} imageData
  * @param {object} [options]
  * @param {'fast'|'balanced'|'aggressive'} [options.mode]
- *   - fast: original only (ultra-fast video stream path);
- *   - balanced: original + blue-ink/color rescue (2*R-B) + red channel;
- *   - aggressive: balanced + dot-matrix healing + otsu binary + inverted.
+ *   - fast: original only;
+ *   - balanced: original + contrast-stretched red/blue-enhanced + sharpen + CLAHE + fast tilt shear + center-zoom;
+ *   - aggressive: balanced + full 6-angle shear + quiet-zone + dot-matrix + otsu + inverted.
  * @returns {Promise<import('../types').DecodeResult>}
  */
 export async function decodeQRImageData(imageData, options = {}) {
@@ -104,13 +110,62 @@ function* buildDecodeAttempts(imageData, mode = 'balanced') {
   yield { data: imageData, label: 'original' };
   if (mode === 'fast') return;
 
-  // Stage 2: high-efficiency color/blue-ink rescue channels (2*R-B and red-channel)
-  for (const variant of generatePreprocessVariants(imageData)) {
+  // Stage 2: high-efficiency color/blue-ink rescue channels (contrast-stretched 2*R-B and red-channel)
+  const preprocessVariants = generatePreprocessVariants(imageData);
+  for (const variant of preprocessVariants) {
     yield { data: variant.data, label: variant.label };
   }
+
+  // Stage 3: Sharpened red channel (directly restores blurry, out-of-focus, or distant blue QR codes)
+  const redVariant = preprocessVariants[0]; // red-stretched
+  if (redVariant) {
+    yield {
+      data: sharpenImageData(redVariant.data, 1.2),
+      label: 'sharpen-red',
+    };
+  }
+
+  // Stage 4: CLAHE (local-contrast enhancement: directly rescues faint, shadow-covered, or unevenly lit codes)
+  for (const variant of generateCLAHEVariants(imageData)) {
+    yield { data: variant.data, label: variant.label };
+  }
+
+  // Stage 5: Fast Tilt / Perspective Shear on red-channel (primary pitch & yaw tilts)
+  // Essential for live camera scanning when phone or target is tilted forward/backward or sideways
+  const fastShearAngles = [
+    { sx: 0, sy: 0.35, label: 'tilt-pitch-down' },
+    { sx: 0, sy: -0.35, label: 'tilt-pitch-up' },
+    { sx: 0.35, sy: 0, label: 'tilt-yaw-right' },
+    { sx: -0.35, sy: 0, label: 'tilt-yaw-left' },
+  ];
+  for (const variant of generateShearVariants(redVariant ? redVariant.data : imageData, fastShearAngles)) {
+    yield { data: variant.data, label: `${variant.label}-red` };
+  }
+
+  // Stage 6: Center crop for distant QR codes in large frames (>= 380px)
+  if (width >= 380 && height >= 380) {
+    const cropped = centerCrop(imageData, 0.6);
+    const [croppedRed] = generatePreprocessVariants(cropped);
+    if (croppedRed) {
+      yield { data: croppedRed.data, label: 'center-crop-red' };
+      yield { data: sharpenImageData(croppedRed.data, 1.2), label: 'center-crop-sharpen-red' };
+    }
+  }
+
   if (mode === 'balanced') return;
 
-  // Stage 3: aggressive rescue for difficult cases (dot-matrix pin printer, otsu, inverted)
+  // Stage 7: Full 6-direction tilt shear on original image
+  for (const variant of generateShearVariants(imageData)) {
+    yield { data: variant.data, label: variant.label };
+  }
+
+  // Stage 8: Quiet zone padding (Fixes edge-cropped codes)
+  const padded = addQuietZone(imageData);
+  if (padded) {
+    yield { data: padded, label: 'quiet-zone' };
+  }
+
+  // Stage 9: Aggressive rescue for difficult cases (dot-matrix pin printer, otsu, inverted)
   for (const variant of generateDotMatrixFixVariants(imageData)) {
     yield { data: variant.data, label: variant.label };
   }
@@ -132,9 +187,10 @@ function* buildDecodeAttempts(imageData, mode = 'balanced') {
  * @param {object} [options]
  * @returns {Promise<import('../types').DecodeResult>}
  */
-export async function decodeQRFile(input, options) {
+export async function decodeQRFile(input, options = {}) {
   const imgData = await toImageData(input);
-  return decodeQRImageData(imgData, options);
+  const effectiveOptions = { mode: 'aggressive', ...options };
+  return decodeQRImageData(imgData, effectiveOptions);
 }
 
 /** Convert input types into a single ImageData. */

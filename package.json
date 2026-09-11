@@ -1,6 +1,6 @@
 {
   "name": "qr-decoder-js",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Browser QR code decoder with character encoding detection and fallback decoding to reduce garbled Chinese and non-UTF-8 text.",
   "type": "module",
   "main": "./dist/qr-decoder.umd.cjs",
