@@ -28,7 +28,7 @@ function beginRequest() {
   preview.removeAttribute('src');
   preview.hidden = true;
   placeholder.hidden = false;
-  output.textContent = '识别结果将显示在这里';
+  output.textContent = 'Decoded content will appear here.';
   output.classList.add('empty');
   meta.textContent = '';
   copyButton.hidden = true;
@@ -36,13 +36,13 @@ function beginRequest() {
 }
 
 async function decodeImage(blob, id, requireImageType = true) {
-  if (requireImageType && !blob.type.startsWith('image/')) throw new Error('请选择有效的图片文件。');
+  if (requireImageType && !blob.type.startsWith('image/')) throw new Error('Please choose a valid image file.');
   if (previewUrl) URL.revokeObjectURL(previewUrl);
   previewUrl = URL.createObjectURL(blob);
   preview.src = previewUrl;
   preview.hidden = false;
   placeholder.hidden = true;
-  setStatus('正在识别…');
+  setStatus('Decoding…');
   // Let the browser paint the preview before the synchronous decoding work starts.
   await new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 0)));
   if (id !== requestId) return;
@@ -50,13 +50,13 @@ async function decodeImage(blob, id, requireImageType = true) {
   const result = await decodeQRFile(blob);
   if (id !== requestId) return;
   if (!result.success) {
-    setStatus('未识别到二维码，请尝试更清晰的图片。', true);
+    setStatus('No QR code found. Try a clearer image.', true);
     return;
   }
-  setStatus('识别成功');
+  setStatus('Decoded successfully');
   output.textContent = result.text ?? '';
   output.classList.remove('empty');
-  meta.textContent = `耗时 ${Math.round(performance.now() - start)} ms · 编码 ${result.encoding || '未知'}`;
+  meta.textContent = `Time: ${Math.round(performance.now() - start)} ms · Encoding: ${result.encoding || 'Unknown'}`;
   copyButton.hidden = false;
 }
 
@@ -66,7 +66,7 @@ async function handleFile(file) {
   try {
     await decodeImage(file, id);
   } catch (error) {
-    if (id === requestId) setStatus(error instanceof Error ? error.message : '图片读取失败。', true);
+    if (id === requestId) setStatus(error instanceof Error ? error.message : 'Could not read the image.', true);
   }
 }
 
@@ -74,15 +74,15 @@ async function handleUrl(value) {
   const { id, signal } = beginRequest();
   try {
     const url = new URL(value);
-    if (!['http:', 'https:'].includes(url.protocol)) throw new Error('请输入 HTTP 或 HTTPS 图片链接。');
-    setStatus('正在加载图片…');
+    if (!['http:', 'https:'].includes(url.protocol)) throw new Error('Enter an HTTP or HTTPS image URL.');
+    setStatus('Loading image…');
     const response = await fetch(url, { signal });
-    if (!response.ok) throw new Error(`图片加载失败（HTTP ${response.status}）。`);
+    if (!response.ok) throw new Error(`Could not load the image (HTTP ${response.status}).`);
     const blob = await response.blob();
     if (id === requestId) await decodeImage(blob, id, false);
   } catch (error) {
     if (id !== requestId || error?.name === 'AbortError') return;
-    setStatus(error instanceof TypeError ? '无法加载图片，请检查链接和图片服务器的跨域设置。' : error.message, true);
+    setStatus(error instanceof TypeError ? 'Could not load the image. Check the URL and cross-origin settings.' : error.message, true);
   }
 }
 
@@ -113,10 +113,10 @@ dropZone.addEventListener('drop', event => handleFile(event.dataTransfer?.files?
 copyButton.addEventListener('click', async () => {
   try {
     await navigator.clipboard.writeText(output.textContent);
-    copyButton.textContent = '已复制';
-    setTimeout(() => { copyButton.textContent = '复制'; }, 1500);
+    copyButton.textContent = 'Copied';
+    setTimeout(() => { copyButton.textContent = 'Copy'; }, 1500);
   } catch {
-    setStatus('复制失败，请手动选择内容复制。', true);
+    setStatus('Could not copy. Select the content to copy it manually.', true);
   }
 });
 window.addEventListener('pagehide', () => { if (previewUrl) URL.revokeObjectURL(previewUrl); });

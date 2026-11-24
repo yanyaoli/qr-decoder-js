@@ -1,83 +1,90 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="从图片中识别二维码内容">
-  <title>QR Decoder · 二维码解析</title>
+  <meta name="description" content="Decode QR codes from an image in your browser.">
+  <title>QR Decoder</title>
   <style>
-    :root { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; color: #202a27; background: #f3f4ef; font-synthesis: none; }
+    :root { font-family: "Segoe UI", sans-serif; color: #17191b; background: #f5f5f3; font-synthesis: none; }
     * { box-sizing: border-box; }
     body { margin: 0; }
     button, input { font: inherit; }
     button, .file-button { cursor: pointer; }
-    :focus-visible { outline: 3px solid #a9cdb9; outline-offset: 3px; }
-    header { height: 74px; border-bottom: 1px solid #dce2d8; background: #f9faf6; }
-    .header-inner { max-width: 1100px; height: 100%; margin: auto; padding: 0 28px; display: flex; align-items: center; justify-content: space-between; }
-    .brand { display: flex; align-items: center; gap: 11px; font-size: 16px; font-weight: 700; letter-spacing: -.02em; }
-    .mark { width: 31px; height: 31px; border: 5px solid #1b5140; background: #1b5140; box-shadow: inset 0 0 0 4px #f9faf6; }
-    header a { color: #566c61; text-decoration: none; font-size: 13px; }
-    main { max-width: 1100px; margin: 0 auto; padding: 70px 28px 80px; }
-    h1 { margin: 0; font-size: clamp(32px, 4vw, 46px); letter-spacing: -.055em; line-height: 1.2; }
-    .intro { margin: 14px 0 35px; color: #64736b; font-size: 15px; line-height: 1.7; }
-    .workspace { display: grid; grid-template-columns: 1.08fr .92fr; border: 1px solid #dce2d8; border-radius: 16px; background: #fff; overflow: hidden; box-shadow: 0 16px 48px #203f2e0b; }
+    :focus-visible { outline: 3px solid #939ba2; outline-offset: 3px; }
+    header { border-bottom: 1px solid #e5e5e3; background: #fff; }
+    .header-inner { max-width: 1080px; min-height: 72px; margin: auto; padding: 0 28px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+    .brand { font-size: 16px; font-weight: 700; letter-spacing: -.02em; }
+    .github { display: inline-flex; align-items: center; gap: 8px; color: #34393d; text-decoration: none; font-size: 13px; }
+    .github:hover { color: #000; }
+    main { max-width: 1080px; margin: auto; padding: 76px 28px; }
+    h1 { margin: 0; font-size: clamp(32px, 4vw, 44px); letter-spacing: -.045em; line-height: 1.15; }
+    .intro { margin: 12px 0 36px; color: #666d72; font-size: 15px; line-height: 1.6; }
+    .workspace { display: grid; grid-template-columns: 1fr 1fr; background: #fff; border: 1px solid #e1e3e2; border-radius: 10px; overflow: hidden; }
     .input-panel, .result-panel { padding: 30px; min-width: 0; }
-    .result-panel { border-left: 1px solid #e5eae2; background: #fbfcfa; }
-    h2 { font-size: 16px; letter-spacing: -.02em; margin: 0 0 18px; }
-    .drop { min-height: 238px; border: 1.5px dashed #afc2b3; border-radius: 10px; background: #f5f8f3; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; padding: 24px; }
-    .drop.dragging { border-color: #195d44; background: #eaf4e9; }
-    .drop-icon { width: 46px; height: 46px; display: grid; place-items: center; border: 1px solid #cbdacd; border-radius: 12px; color: #24634a; margin-bottom: 16px; }
-    .drop strong { font-size: 15px; }
-    .hint { color: #78887c; font-size: 13px; line-height: 1.6; margin: 8px 0 18px; }
-    .file-button, .primary { border: 0; background: #215c44; color: white; border-radius: 7px; padding: 10px 17px; font-weight: 600; font-size: 13px; }
-    .file-button:hover, .primary:hover { background: #154634; }
+    .result-panel { border-left: 1px solid #e8e9e8; }
+    h2 { font-size: 15px; margin: 0 0 18px; }
+    .drop { min-height: 235px; border: 1px dashed #afb4b2; border-radius: 8px; background: #fafaf9; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; padding: 24px; }
+    .drop.dragging { border-color: #303539; background: #f0f1ef; }
+    .drop-icon { color: #545b5e; margin-bottom: 14px; }
+    .drop strong { font-size: 14px; }
+    .hint { color: #747b7d; font-size: 13px; line-height: 1.6; margin: 8px 0 18px; }
+    .file-button, .primary { border: 0; background: #222629; color: #fff; border-radius: 6px; padding: 11px 16px; font-weight: 600; font-size: 13px; }
+    .file-button:hover, .primary:hover { background: #42484c; }
     input[type=file] { position: absolute; width: 1px; height: 1px; opacity: 0; }
-    .url-label { display: block; margin: 25px 0 9px; color: #394940; font-weight: 600; font-size: 13px; }
+    .url-label { display: block; margin: 25px 0 9px; font-weight: 600; font-size: 13px; }
     .url-form { display: flex; gap: 8px; }
-    .url-form input { min-width: 0; flex: 1; border: 1px solid #d7e0d6; border-radius: 7px; padding: 11px 12px; color: #202a27; background: white; font-size: 13px; }
-    .url-form input::placeholder { color: #9aa79e; }
-    .url-form button:disabled { opacity: .55; }
-    .preview { height: 195px; display: grid; place-items: center; background: #f0f3ed; border: 1px solid #e5ebe3; border-radius: 10px; color: #87968a; font-size: 13px; overflow: hidden; }
+    .url-form input { min-width: 0; flex: 1; border: 1px solid #d9dcda; border-radius: 6px; padding: 11px 12px; color: #17191b; background: #fff; font-size: 13px; }
+    .url-form input::placeholder { color: #969c9c; }
+    .preview { height: 195px; display: grid; place-items: center; background: #f7f7f6; border: 1px solid #eceeec; border-radius: 8px; color: #808886; font-size: 13px; overflow: hidden; }
     .preview img { max-width: 100%; max-height: 100%; object-fit: contain; }
-    .result-heading { display: flex; align-items: center; justify-content: space-between; margin: 27px 0 10px; }
+    .result-heading { display: flex; align-items: center; justify-content: space-between; margin: 26px 0 10px; }
     .result-heading h3 { margin: 0; font-size: 13px; }
-    .copy { padding: 5px 9px; border: 1px solid #dce5db; background: #fff; color: #315c43; border-radius: 5px; font-size: 12px; }
-    .output { min-height: 96px; white-space: pre-wrap; overflow-wrap: anywhere; color: #263d31; font-size: 14px; line-height: 1.65; }
-    .empty { color: #91a096; }
-    .status { margin: 0 0 10px; font-size: 13px; color: #61756a; min-height: 20px; }
-    .status.error { color: #a74436; }
-    .meta { color: #87968b; font-size: 12px; line-height: 1.6; }
-    .footer { margin-top: 25px; color: #87958a; font-size: 12px; }
+    .copy { padding: 5px 10px; border: 1px solid #d9dcda; background: #fff; color: #34393d; border-radius: 5px; font-size: 12px; }
+    .output { min-height: 96px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; line-height: 1.65; }
+    .empty { color: #8c9391; }
+    .status { margin: 0 0 10px; font-size: 13px; color: #606a65; min-height: 20px; }
+    .status.error { color: #a13f32; }
+    .meta, .footer { color: #777f7c; font-size: 12px; line-height: 1.6; }
+    .footer { margin: 22px 0 0; }
     [hidden] { display: none !important; }
-    @media (max-width: 700px) { header { height: 64px; } main { padding: 44px 16px 50px; } .header-inner { padding: 0 16px; } .workspace { grid-template-columns: 1fr; } .input-panel, .result-panel { padding: 22px; } .result-panel { border-left: 0; border-top: 1px solid #e5eae2; } .drop { min-height: 200px; } }
+    @media (max-width: 700px) { main { padding: 46px 16px; } .header-inner { padding: 0 16px; min-height: 64px; } .workspace { grid-template-columns: 1fr; } .input-panel, .result-panel { padding: 22px; } .result-panel { border-left: 0; border-top: 1px solid #e8e9e8; } .drop { min-height: 200px; } }
   </style>
 </head>
 <body>
-  <header><div class="header-inner"><div class="brand"><span class="mark" aria-hidden="true"></span>QR Decoder</div><a href="https://github.com/yanyaoli/qr-decoder-js" target="_blank" rel="noopener noreferrer">GitHub ↗</a></div></header>
+  <header>
+    <div class="header-inner">
+      <span class="brand">QR Decoder</span>
+      <a class="github" href="https://github.com/yanyaoli/qr-decoder-js" target="_blank" rel="noopener noreferrer" aria-label="GitHub repository yanyaoli slash qr-decoder-js">
+        <svg aria-hidden="true" width="20" height="20" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38l-.01-1.49c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.16-.89-1.16-.73-.5.06-.49.06-.49.8.06 1.22.82 1.22.82.71 1.22 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82A7.65 7.65 0 0 1 8 3.74c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48l-.01 2.19c0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+        <span>yanyaoli / qr-decoder-js</span>
+      </a>
+    </div>
+  </header>
   <main>
-    <h1>识别二维码</h1>
-    <p class="intro">上传、粘贴图片或输入图片链接，查看二维码内容。</p>
+    <h1>Decode a QR code</h1>
+    <p class="intro">Choose, paste, or link an image to read its QR code.</p>
     <div class="workspace">
       <section class="input-panel" aria-labelledby="input-heading">
-        <h2 id="input-heading">选择图片</h2>
+        <h2 id="input-heading">Image</h2>
         <div class="drop" id="drop-zone">
-          <div class="drop-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 16V4m-4 4 4-4 4 4M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4"/></svg></div>
-          <strong>拖放图片到这里</strong>
-          <p class="hint">也可以直接按 Ctrl / ⌘ + V 粘贴图片</p>
-          <label class="file-button">选择本地图片<input id="file-input" type="file" accept="image/*"></label>
+          <div class="drop-icon" aria-hidden="true"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 16V4m-4 4 4-4 4 4M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4"/></svg></div>
+          <strong>Drop an image here</strong>
+          <p class="hint">Or paste an image with Ctrl / ⌘ + V</p>
+          <label class="file-button">Choose image<input id="file-input" type="file" accept="image/*"></label>
         </div>
         <form id="url-form">
-          <label class="url-label" for="image-url">图片链接</label>
-          <div class="url-form"><input id="image-url" type="url" placeholder="https://example.com/image.png" required><button class="primary" type="submit">解析链接</button></div>
+          <label class="url-label" for="image-url">Image URL</label>
+          <div class="url-form"><input id="image-url" type="url" placeholder="https://example.com/image.png" required><button class="primary" type="submit">Decode</button></div>
         </form>
-        <p class="footer">图片在浏览器中解析，图片链接需要允许跨域访问。</p>
+        <p class="footer">Images are decoded in your browser. Image URLs must allow cross-origin access.</p>
       </section>
       <section class="result-panel" aria-labelledby="result-heading">
-        <h2 id="result-heading">识别结果</h2>
-        <div class="preview"><span id="preview-placeholder">图片预览</span><img id="preview" alt="待识别图片预览" hidden></div>
-        <div class="result-heading"><h3>内容</h3><button id="copy" class="copy" type="button" hidden>复制</button></div>
-        <p id="status" class="status" role="status" aria-live="polite">等待图片</p>
-        <div id="output" class="output empty">识别结果将显示在这里</div>
+        <h2 id="result-heading">Result</h2>
+        <div class="preview"><span id="preview-placeholder">Image preview</span><img id="preview" alt="Image to decode" hidden></div>
+        <div class="result-heading"><h3>Content</h3><button id="copy" class="copy" type="button" hidden>Copy</button></div>
+        <p id="status" class="status" role="status" aria-live="polite">Waiting for an image</p>
+        <div id="output" class="output empty">Decoded content will appear here.</div>
         <div id="meta" class="meta"></div>
       </section>
     </div>
