@@ -4,4 +4,4 @@
  * Keep implementation details in `core/` private so they can evolve without
  * expanding the package's public compatibility surface.
  */
-export { decodeQRImageData, decodeQRFile } from './core/decoder';
+export { decodeQRImageData, decodeQRFile } from './core/decoder.js';

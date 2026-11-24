@@ -38,6 +38,61 @@ export function createImageData(width, height) {
   };
 }
 
+// Separable cubic interpolation keeps small modules distinct before thresholding.
+function resizePlane(source: Uint8Array | Uint8ClampedArray, width: number, height: number, outWidth: number, outHeight: number, a: number, scale?: number): Uint8Array {
+  const weight = (distance: number) => {
+    const x = Math.abs(distance);
+    if (x <= 1) return (a + 2) * x ** 3 - (a + 3) * x ** 2 + 1;
+    if (x < 2) return a * x ** 3 - 5 * a * x ** 2 + 8 * a * x - 4 * a;
+    return 0;
+  };
+  const horizontal = new Float32Array(outWidth * height);
+  for (let x = 0; x < outWidth; x++) {
+    const sourceX = (x + 0.5) * (scale ? 1 / scale : width / outWidth) - 0.5, base = Math.floor(sourceX);
+    const indices = Array.from({ length: 4 }, (_, i) => Math.max(0, Math.min(width - 1, base + i - 1)));
+    const weights = indices.map((_, i) => weight(sourceX - (base + i - 1)));
+    for (let y = 0; y < height; y++) {
+      let sum = 0;
+      for (let i = 0; i < 4; i++) sum += source[y * width + indices[i]] * weights[i];
+      horizontal[y * outWidth + x] = sum;
+    }
+  }
+  const output = new Uint8Array(outWidth * outHeight);
+  for (let y = 0; y < outHeight; y++) {
+    const sourceY = (y + 0.5) * (scale ? 1 / scale : height / outHeight) - 0.5, base = Math.floor(sourceY);
+    const indices = Array.from({ length: 4 }, (_, i) => Math.max(0, Math.min(height - 1, base + i - 1)));
+    const weights = indices.map((_, i) => weight(sourceY - (base + i - 1)));
+    for (let x = 0; x < outWidth; x++) {
+      let sum = 0;
+      for (let i = 0; i < 4; i++) sum += horizontal[indices[i] * outWidth + x] * weights[i];
+      output[y * outWidth + x] = Math.max(0, Math.min(255, Math.round(sum)));
+    }
+  }
+  return output;
+}
+
+/** Enlarge small colored codes before and after adaptive thresholding. */
+export function enlargeSmallColorCode(imageData) {
+  const { data, width, height } = imageData;
+  const evenRound = (value: number) => value % 1 === 0.5 ? Math.round(value / 2) * 2 : Math.round(value);
+  const w = evenRound(width * 1.5), h = evenRound(height * 1.5);
+  const red = new Uint8Array(width * height), blue = new Uint8Array(width * height);
+  for (let i = 0; i < red.length; i++) { red[i] = data[i * 4]; blue[i] = data[i * 4 + 2]; }
+  const scaledRed = resizePlane(red, width, height, w, h, -0.75, 1.5);
+  const scaledBlue = resizePlane(blue, width, height, w, h, -0.75, 1.5);
+  const gray = new Uint8Array(w * h);
+  let min = 255, max = 0;
+  for (let i = 0; i < gray.length; i++) {
+    const value = Math.max(0, Math.min(255, 2 * scaledRed[i] - scaledBlue[i]));
+    gray[i] = value; min = Math.min(min, value); max = Math.max(max, value);
+  }
+  if (max - min <= 15) return null;
+  for (let i = 0; i < gray.length; i++) gray[i] = Math.floor((gray[i] - min) * 255 / (max - min));
+  const binary = toAdaptiveBinary(gray, w, h, 8, 0.15);
+  const enlarged = resizePlane(binary, w, h, w * 4, h * 4, -0.5);
+  return grayToImageData(enlarged, w * 4, h * 4);
+}
+
 /**
  * Create a canvas when a browser or worker canvas API is available.
  * Returns null so callers can use their CPU fallback in headless environments.
@@ -596,7 +651,7 @@ export function toAdaptiveBinary(gray, width, height, radius = 8, bias = 0.15) {
  * @param {object} [opts]
  * @returns {Uint8ClampedArray}
  */
-export function toCLAHE(gray, width, height, opts = {}) {
+export function toCLAHE(gray, width, height, opts: { clipLimit?: number; tileSize?: number } = {}) {
   const { clipLimit = 2.5, tileSize = 8 } = opts;
 
   const out = new Uint8ClampedArray(gray.length);

@@ -144,7 +144,7 @@ export function scoreText(text) {
  * @param {string} [detectedEncoding] Optional encoding hint from the caller.
  * @returns {{ text: string, score: number, encoding: string }}
  */
-export function decodeWithFallback(bytes, detectedEncoding) {
+export function decodeWithFallback(bytes: Uint8Array, detectedEncoding?: string) {
   // 1. Strict UTF-8 verification: if bytes form completely valid UTF-8 without error,
   // UTF-8 has the highest confidence.
   let validUtf8 = false;
@@ -185,4 +185,39 @@ export function decodeWithFallback(bytes, detectedEncoding) {
   }
 
   return best;
+}
+
+// Decode each byte segment separately: an ECI assignment applies to subsequent segments.
+const ECI_ENCODINGS = { 3: 'iso-8859-1', 20: 'shift_jis', 26: 'utf-8', 28: 'big5', 29: 'gb18030', 30: 'euc-kr' };
+
+export function decodeChunks(chunks, characterSet) {
+  let eci = null;
+  const encodings = [];
+  let text = '';
+  let guessed = null;
+  for (const chunk of chunks) {
+    if (chunk.type === 'eci') {
+      eci = ECI_ENCODINGS[chunk.assignmentNumber];
+      if (!eci) throw new Error(`Unsupported ECI assignment ${chunk.assignmentNumber}`);
+    } else if (chunk.type === 'byte') {
+      const bytes = new Uint8Array(chunk.bytes);
+      const declared = eci || characterSet;
+      if (declared) {
+        const encoding = eci === 'iso-8859-1' ? eci : normalizeEncoding(declared);
+        text += eci === 'iso-8859-1'
+          ? Array.from(bytes, byte => String.fromCharCode(byte)).join('')
+          : new TextDecoder(encoding, { fatal: true }).decode(bytes);
+        encodings.push(encoding);
+      } else {
+        const result = decodeWithFallback(bytes);
+        text += result.text;
+        guessed = result.encoding;
+        encodings.push(result.encoding);
+      }
+    } else {
+      text += chunk.text || '';
+    }
+  }
+  const unique = [...new Set(encodings)];
+  return { text, encoding: unique.length === 1 ? unique[0] : unique.length ? 'mixed' : 'utf-8', detectedEncoding: guessed };
 }

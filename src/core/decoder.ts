@@ -1,8 +1,9 @@
-// Main decoding pipeline: high-performance decoding using zxing-wasm
+// Main decoding pipeline using the bundled TypeScript QR engine
 // with robust multi-channel (blue/red/contrast), edge sharpening, CLAHE, tilt shear compensation,
 // center-zoom for distant codes, and universal multi-encoding detection.
 
-import { readBarcodesFromImageData } from './wasm-loader';
+import { scanQR } from '../native/scanner.js';
+import type { ReaderOptions } from '../types.js';
 import {
   generatePreprocessVariants,
   sharpenImageData,
@@ -16,23 +17,18 @@ import {
   toOtsuBinary,
   toAdaptiveBinary,
   grayToImageData,
-} from './preprocess';
-import { decodeWithFallback } from './encoding';
+  enlargeSmallColorCode,
+} from './preprocess.js';
+import { decodeChunks } from './encoding.js';
 
 const DEFAULT_READER_OPTIONS = {
-  formats: ['QRCode'],
-  tryRotate: true,
   tryInvert: true,
-  tryHarder: true,
-  tryDownscale: true,
-  tryDenoise: true,
-  maxNumberOfSymbols: 1,
 };
 
 const MODES = ['fast', 'balanced', 'aggressive'];
 
 /**
- * Decode a QR code from ImageData using zxing-wasm.
+ * Decode a QR code from ImageData.
  *
  * @param {ImageData} imageData
  * @param {object} [options]
@@ -43,7 +39,7 @@ const MODES = ['fast', 'balanced', 'aggressive'];
  *     Otsu, adaptive-binary, and inverted variants.
  * @returns {Promise<import('../types').DecodeResult>}
  */
-export async function decodeQRImageData(imageData, options = {}) {
+export async function decodeQRImageData(imageData, options: ReaderOptions = {}) {
   if (
     !imageData ||
     typeof imageData.width !== 'number' ||
@@ -53,49 +49,47 @@ export async function decodeQRImageData(imageData, options = {}) {
     return { success: false, error: 'Invalid image data (expected ImageData or {width,height,data})' };
   }
 
-  const { mode = 'aggressive', ...zxingOptions } = options;
+  const { mode = 'aggressive', ...readerOverrides } = options;
   const effectiveMode = MODES.includes(mode) ? mode : 'balanced';
-  const readerOptions = { ...DEFAULT_READER_OPTIONS, ...zxingOptions };
+  const readerOptions = { ...DEFAULT_READER_OPTIONS, ...readerOverrides };
 
-  const attempts = buildDecodeAttempts(imageData, effectiveMode);
+  const attempts = buildDecodeAttempts(imageData, effectiveMode, readerOptions.tryInvert !== false);
 
-  let rawBytes = null;
+  let hit = null;
   let successVersion = null;
 
   for (const ver of attempts) {
-    let results;
     try {
-      results = await readBarcodesFromImageData(ver.data, readerOptions);
-    } catch (e) {
-      console.warn(`Preprocess version "${ver.label}" decode failed:`, e);
-      continue;
-    }
-
-    if (results && results.length > 0) {
-      const hit =
-        results.find((r) => r && r.isValid && r.bytes && r.bytes.length) || results[0];
-      if (hit && hit.bytes && hit.bytes.length) {
-        rawBytes = new Uint8Array(hit.bytes);
+      const pixels = ver.data.data instanceof Uint8ClampedArray
+        ? ver.data.data : new Uint8ClampedArray(ver.data.data);
+      hit = scanQR(pixels, ver.data.width, ver.data.height, readerOptions.tryInvert !== false, ver.soft === true);
+      if (hit) {
         successVersion = ver.label;
         break;
       }
+    } catch (e) {
+      console.warn(`Preprocess version "${ver.label}" decode failed:`, e);
     }
   }
 
-  if (!rawBytes) {
+  if (!hit) {
     return { success: false, error: 'No QR code found in the image' };
   }
 
-  // Multi-encoding fallback decoding using universal native TextDecoder and heuristic scoring
-  const result = decodeWithFallback(rawBytes);
-
-  return {
-    success: true,
-    text: result.text,
-    encoding: result.encoding,
-    detectedEncoding: result.encoding,
-    version: successVersion,
-  };
+  try {
+    const result = decodeChunks(hit.chunks, options.characterSet);
+    return {
+      success: true,
+      text: result.text,
+      encoding: result.encoding,
+      detectedEncoding: result.detectedEncoding,
+      rawBytes: new Uint8Array(hit.bytes),
+      qrVersion: hit.version,
+      version: successVersion,
+    };
+  } catch (e) {
+    return { success: false, error: `Unable to decode QR text: ${e.message}` };
+  }
 }
 
 /**
@@ -105,7 +99,7 @@ export async function decodeQRImageData(imageData, options = {}) {
  * @param {'fast'|'balanced'|'aggressive'} mode
  * @yields {{ data: ImageData, label: string }}
  */
-function* buildDecodeAttempts(imageData, mode = 'balanced') {
+function* buildDecodeAttempts(imageData, mode = 'balanced', tryInvert = true) {
   const { width, height } = imageData;
 
   // Stage 1: original (covers standard B&W QR codes in single pass)
@@ -126,6 +120,27 @@ function* buildDecodeAttempts(imageData, mode = 'balanced') {
       data: sharpenImageData(redVariant.data, 1.2),
       label: 'sharpen-red',
     };
+  }
+
+  // Try inexpensive threshold variants before the geometric rescue passes.
+  // These often resolve colored and low-contrast codes without shearing or cropping.
+  if (mode === 'aggressive') {
+    const sources = [
+      { data: imageData, label: 'gray' },
+      ...preprocessVariants.map((variant) => ({ data: variant.data, label: variant.label })),
+    ];
+    for (const source of sources) {
+      const gray = toGray(source.data);
+      yield { data: grayToImageData(toOtsuBinary(gray, width, height), width, height), label: `otsu-binary-${source.label}` };
+      yield { data: grayToImageData(toAdaptiveBinary(gray, width, height), width, height), label: `adaptive-binary-${source.label}` };
+    }
+    const rescueSources = [
+      { data: imageData, label: '' },
+      ...preprocessVariants.map((variant) => ({ data: variant.data, label: `${variant.label}-` })),
+    ];
+    for (const source of rescueSources) for (const variant of generateDotMatrixFixVariants(source.data)) {
+      yield { data: variant.data, label: `${source.label}${variant.label}` };
+    }
   }
 
   // Stage 4: CLAHE (local-contrast enhancement: directly rescues faint, shadow-covered, or unevenly lit codes)
@@ -179,20 +194,6 @@ function* buildDecodeAttempts(imageData, mode = 'balanced') {
     }
   }
 
-  // Stage 9: Apply morphology and thresholding to every useful source channel.
-  const rescueSources = [
-    { data: imageData, label: '' },
-    ...preprocessVariants.map((variant) => ({
-      data: variant.data,
-      label: `${variant.label}-`,
-    })),
-  ];
-  for (const source of rescueSources) {
-    for (const variant of generateDotMatrixFixVariants(source.data)) {
-      yield { data: variant.data, label: `${source.label}${variant.label}` };
-    }
-  }
-
   const binarySources = [
     { data: imageData, label: 'gray' },
     ...preprocessVariants.map((variant) => ({
@@ -200,25 +201,13 @@ function* buildDecodeAttempts(imageData, mode = 'balanced') {
       label: variant.label,
     })),
   ];
-  for (const source of binarySources) {
-    const sourceGray = toGray(source.data);
-    yield {
-      data: grayToImageData(toOtsuBinary(sourceGray, width, height), width, height),
-      label: `otsu-binary-${source.label}`,
-    };
-  }
-
-  for (const source of binarySources) {
-    const sourceGray = toGray(source.data);
-    yield {
-      data: grayToImageData(toAdaptiveBinary(sourceGray, width, height), width, height),
-      label: `adaptive-binary-${source.label}`,
-    };
-  }
-
-  for (const source of binarySources) {
+  if (tryInvert) for (const source of binarySources) {
     const inverted = generateInvertedVariant(source.data);
     yield { data: inverted.data, label: `inverted-${source.label}` };
+  }
+  if (Math.max(width, height) <= 350) {
+    const enlarged = enlargeSmallColorCode(imageData);
+    if (enlarged) yield { data: enlarged, label: 'small-color-upscaled', soft: true };
   }
 }
 
@@ -230,9 +219,9 @@ function* buildDecodeAttempts(imageData, mode = 'balanced') {
  * @param {object} [options]
  * @returns {Promise<import('../types').DecodeResult>}
  */
-export async function decodeQRFile(input, options = {}) {
+export async function decodeQRFile(input, options: ReaderOptions = {}) {
   const imgData = await toImageData(input);
-  const effectiveOptions = { mode: 'aggressive', ...options };
+  const effectiveOptions: ReaderOptions = { mode: 'aggressive', ...options };
   return decodeQRImageData(imgData, effectiveOptions);
 }
 
